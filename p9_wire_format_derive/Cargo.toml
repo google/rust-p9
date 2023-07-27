@@ -1,0 +1,16 @@
+[package]
+name = "p9_wire_format_derive"
+version = "0.2.0"
+authors = ["The ChromiumOS Authors"]
+license-file = "../LICENSE"
+description = "Supporting proc-macro for the `p9` crate."
+repository = "https://github.com/google/rust-p9"
+readme = "../README.md"
+
+[dependencies]
+syn = "^1"
+quote = "^1"
+proc-macro2 = "^1"
+
+[lib]
+proc-macro = true

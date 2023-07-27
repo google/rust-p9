@@ -7,7 +7,7 @@
 extern crate libc;
 
 #[macro_use]
-extern crate wire_format_derive;
+extern crate p9_wire_format_derive;
 
 mod protocol;
 mod server;
