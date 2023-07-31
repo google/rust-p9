@@ -1,8 +1,8 @@
 [package]
 name = "p9_wire_format_derive"
-version = "0.2.0"
+version = "0.2.3"
 authors = ["The ChromiumOS Authors"]
-license-file = "../LICENSE"
+license = "BSD-3-Clause"
 description = "Supporting proc-macro for the `p9` crate."
 repository = "https://github.com/google/rust-p9"
 readme = "../README.md"

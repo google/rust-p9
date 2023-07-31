@@ -1,16 +1,16 @@
 [package]
 name = "p9"
-version = "0.2.0"
+version = "0.2.3"
 authors = ["The ChromiumOS Authors"]
 edition = "2021"
-license-file = "LICENSE"
+license = "BSD-3-Clause"
 description = "Server implementation of the 9p file system protocol"
 repository = "https://github.com/google/rust-p9"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 serde = { version = "1.0", features = ["derive"] }
-p9_wire_format_derive = { path = "p9_wire_format_derive", version = "0.2.0" }
+p9_wire_format_derive = { path = "p9_wire_format_derive", version = "0.2.3" }
 
 [features]
 trace = []

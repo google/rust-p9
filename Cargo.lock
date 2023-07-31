@@ -10,7 +10,7 @@ checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
 
 [[package]]
 name = "p9"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "libc",
  "p9_wire_format_derive",
@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "p9_wire_format_derive"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "proc-macro2",
  "quote",
