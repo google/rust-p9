@@ -9,11 +9,11 @@ protocol.
   and de-serialization for some base types (integers, strings, vectors) that form the foundation of
   all [9p] messages. Wire format implementations for all other messages are derived using the
   `wire_format_derive` macro.
-- [src/server.rs] - Implements a full [9p] server, carrying out file system requests on behalf of
+- [src/server] - Implements a full [9p] server, carrying out file system requests on behalf of
   clients.
 
 [9p]: http://man.cat-v.org/plan_9/5/intro
 [procedural macro]: https://doc.rust-lang.org/proc_macro/index.html
 [src/protocol]: src/protocol/
-[src/server.rs]: src/server.rs
+[src/server]: src/server/
 [wire_format_derive]: wire_format_derive/
