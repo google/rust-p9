@@ -16,4 +16,4 @@ protocol.
 [procedural macro]: https://doc.rust-lang.org/proc_macro/index.html
 [src/protocol]: src/protocol/
 [src/server]: src/server/
-[wire_format_derive]: wire_format_derive/
+[wire_format_derive]: p9_wire_format_derive/
