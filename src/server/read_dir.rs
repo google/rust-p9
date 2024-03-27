@@ -45,7 +45,10 @@ pub struct DirEntry<'r> {
 }
 
 pub struct ReadDir<'d, D> {
-    buf: [u8; 256],
+    // This buffer is double the size of NAME_MAX because
+    // getdents64 chokes (EINVAL) with a buffer sized
+    // NAME MAX on file names close to NAME_MAX in length.
+    buf: [u8; 512],
     dir: &'d mut D,
     current: usize,
     end: usize,
@@ -118,7 +121,7 @@ pub fn read_dir<D: AsRawFd>(dir: &mut D, offset: libc::off64_t) -> Result<ReadDi
     syscall!(unsafe { libc::lseek64(dir.as_raw_fd(), offset, libc::SEEK_SET) })?;
 
     Ok(ReadDir {
-        buf: [0u8; 256],
+        buf: [0u8; 512],
         dir,
         current: 0,
         end: 0,
