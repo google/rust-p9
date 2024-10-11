@@ -712,7 +712,7 @@ impl Server {
             ffree: out.f_ffree,
             // Safe because the fsid has only integer fields and the compiler will verify that is
             // the same width as the `fsid` field in Rstatfs.
-            fsid: unsafe { mem::transmute(out.f_fsid) },
+            fsid: unsafe { mem::transmute::<libc::fsid_t, u64>(out.f_fsid) },
             namelen: out.f_namelen as u32,
         })
     }
@@ -924,8 +924,8 @@ impl Server {
                 libc::fchownat(
                     self.proc.as_raw_fd(),
                     path.as_ptr(),
-                    libc::uid_t::max_value(),
-                    libc::gid_t::max_value(),
+                    libc::uid_t::MAX,
+                    libc::gid_t::MAX,
                     0,
                 )
             };
