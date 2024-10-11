@@ -7,12 +7,12 @@ use std::io::ErrorKind;
 use std::io::Read;
 use std::io::Write;
 use std::mem;
-use std::string::String;
 use std::vec::Vec;
 
 use p9_wire_format_derive::P9WireFormat;
 
 use crate::protocol::wire_format::Data;
+use crate::protocol::wire_format::P9String;
 use crate::protocol::wire_format::WireFormat;
 
 // Message type constants.  Taken from "include/net/9p/9p.h" in the linux kernel
@@ -313,7 +313,7 @@ impl Tframe {
 #[derive(Debug, P9WireFormat)]
 pub struct Tversion {
     pub msize: u32,
-    pub version: String,
+    pub version: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
@@ -325,7 +325,7 @@ pub struct Tflush {
 pub struct Twalk {
     pub fid: u32,
     pub newfid: u32,
-    pub wnames: Vec<String>,
+    pub wnames: Vec<P9String>,
 }
 
 #[derive(Debug, P9WireFormat)]
@@ -355,8 +355,8 @@ pub struct Tremove {
 #[derive(Debug, P9WireFormat)]
 pub struct Tauth {
     pub afid: u32,
-    pub uname: String,
-    pub aname: String,
+    pub uname: P9String,
+    pub aname: P9String,
     pub n_uname: u32,
 }
 
@@ -364,8 +364,8 @@ pub struct Tauth {
 pub struct Tattach {
     pub fid: u32,
     pub afid: u32,
-    pub uname: String,
-    pub aname: String,
+    pub uname: P9String,
+    pub aname: P9String,
     pub n_uname: u32,
 }
 
@@ -383,7 +383,7 @@ pub struct Tlopen {
 #[derive(Debug, P9WireFormat)]
 pub struct Tlcreate {
     pub fid: u32,
-    pub name: String,
+    pub name: P9String,
     pub flags: u32,
     pub mode: u32,
     pub gid: u32,
@@ -392,15 +392,15 @@ pub struct Tlcreate {
 #[derive(Debug, P9WireFormat)]
 pub struct Tsymlink {
     pub fid: u32,
-    pub name: String,
-    pub symtgt: String,
+    pub name: P9String,
+    pub symtgt: P9String,
     pub gid: u32,
 }
 
 #[derive(Debug, P9WireFormat)]
 pub struct Tmknod {
     pub dfid: u32,
-    pub name: String,
+    pub name: P9String,
     pub mode: u32,
     pub major: u32,
     pub minor: u32,
@@ -411,7 +411,7 @@ pub struct Tmknod {
 pub struct Trename {
     pub fid: u32,
     pub dfid: u32,
-    pub name: String,
+    pub name: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
@@ -443,13 +443,13 @@ pub struct Tsetattr {
 pub struct Txattrwalk {
     pub fid: u32,
     pub newfid: u32,
-    pub name: String,
+    pub name: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
 pub struct Txattrcreate {
     pub fid: u32,
-    pub name: String,
+    pub name: P9String,
     pub attr_size: u64,
     pub flags: u32,
 }
@@ -475,7 +475,7 @@ pub struct Tlock {
     pub start: u64,
     pub length: u64,
     pub proc_id: u32,
-    pub client_id: String,
+    pub client_id: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
@@ -485,20 +485,20 @@ pub struct Tgetlock {
     pub start: u64,
     pub length: u64,
     pub proc_id: u32,
-    pub client_id: String,
+    pub client_id: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
 pub struct Tlink {
     pub dfid: u32,
     pub fid: u32,
-    pub name: String,
+    pub name: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
 pub struct Tmkdir {
     pub dfid: u32,
-    pub name: String,
+    pub name: P9String,
     pub mode: u32,
     pub gid: u32,
 }
@@ -506,15 +506,15 @@ pub struct Tmkdir {
 #[derive(Debug, P9WireFormat)]
 pub struct Trenameat {
     pub olddirfid: u32,
-    pub oldname: String,
+    pub oldname: P9String,
     pub newdirfid: u32,
-    pub newname: String,
+    pub newname: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
 pub struct Tunlinkat {
     pub dirfd: u32,
-    pub name: String,
+    pub name: P9String,
     pub flags: u32,
 }
 
@@ -732,13 +732,13 @@ pub struct Dirent {
     pub qid: Qid,
     pub offset: u64,
     pub ty: u8,
-    pub name: String,
+    pub name: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
 pub struct Rversion {
     pub msize: u32,
-    pub version: String,
+    pub version: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
@@ -808,7 +808,7 @@ pub struct Rmknod {
 
 #[derive(Debug, P9WireFormat)]
 pub struct Rreadlink {
-    pub target: String,
+    pub target: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
@@ -856,7 +856,7 @@ pub struct Rgetlock {
     pub start: u64,
     pub length: u64,
     pub proc_id: u32,
-    pub client_id: String,
+    pub client_id: P9String,
 }
 
 #[derive(Debug, P9WireFormat)]
