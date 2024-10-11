@@ -38,14 +38,8 @@ macro_rules! uint_wire_format_impl {
             }
 
             fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-                let mut buf = [0u8; mem::size_of::<$Ty>()];
-
                 // Encode the bytes into the buffer in little endian order.
-                for idx in 0..mem::size_of::<$Ty>() {
-                    buf[idx] = (self >> (8 * idx)) as u8;
-                }
-
-                writer.write_all(&buf)
+                writer.write_all(&<$Ty>::to_le_bytes(*self))
             }
 
             fn decode<R: Read>(reader: &mut R) -> io::Result<Self> {
@@ -53,12 +47,7 @@ macro_rules! uint_wire_format_impl {
                 reader.read_exact(&mut buf)?;
 
                 // Read bytes from the buffer in little endian order.
-                let mut result = 0;
-                for idx in 0..mem::size_of::<$Ty>() {
-                    result |= (buf[idx] as $Ty) << (8 * idx);
-                }
-
-                Ok(result)
+                Ok(<$Ty>::from_le_bytes(buf))
             }
         }
     };
