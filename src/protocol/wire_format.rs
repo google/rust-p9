@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use std::ffi::CStr;
+use std::ffi::CString;
+use std::ffi::OsStr;
 use std::fmt;
 use std::io;
 use std::io::ErrorKind;
@@ -10,7 +13,6 @@ use std::io::Write;
 use std::mem;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use std::string::String;
 use std::vec::Vec;
 
 /// A type that can be encoded on the wire using the 9P protocol.
@@ -57,30 +59,91 @@ uint_wire_format_impl!(u16);
 uint_wire_format_impl!(u32);
 uint_wire_format_impl!(u64);
 
-// The 9P protocol requires that strings are UTF-8 encoded.  The wire format is a u16
-// count |N|, encoded in little endian, followed by |N| bytes of UTF-8 data.
-impl WireFormat for String {
-    fn byte_size(&self) -> u32 {
-        (mem::size_of::<u16>() + self.len()) as u32
-    }
+/// A 9P protocol string.
+///
+/// The string is always valid UTF-8 and 65535 bytes or less (enforced by `P9String::new()`).
+///
+/// It is represented as a C string with a terminating 0 (NUL) character to allow it to be passed
+/// directly to libc functions.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct P9String {
+    cstr: CString,
+}
 
-    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        if self.len() > u16::MAX as usize {
+impl P9String {
+    pub fn new(string_bytes: impl Into<Vec<u8>>) -> io::Result<Self> {
+        let string_bytes: Vec<u8> = string_bytes.into();
+
+        if string_bytes.len() > u16::MAX as usize {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
                 "string is too long",
             ));
         }
 
+        // 9p strings must be valid UTF-8.
+        let _check_utf8 = std::str::from_utf8(&string_bytes)
+            .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
+
+        let cstr =
+            CString::new(string_bytes).map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
+
+        Ok(P9String { cstr })
+    }
+
+    pub fn len(&self) -> usize {
+        self.cstr.as_bytes().len()
+    }
+
+    pub fn as_c_str(&self) -> &CStr {
+        self.cstr.as_c_str()
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.cstr.as_bytes()
+    }
+
+    /// Returns a raw pointer to the string's storage.
+    ///
+    /// The string bytes are always followed by a NUL terminator ('\0'), so the pointer can be
+    /// passed directly to libc functions that expect a C string.
+    pub fn as_ptr(&self) -> *const libc::c_char {
+        self.cstr.as_ptr()
+    }
+}
+
+impl PartialEq<&str> for P9String {
+    fn eq(&self, other: &&str) -> bool {
+        self.cstr.as_bytes() == other.as_bytes()
+    }
+}
+
+impl TryFrom<&OsStr> for P9String {
+    type Error = io::Error;
+
+    fn try_from(value: &OsStr) -> io::Result<Self> {
+        let string_bytes = value.as_encoded_bytes();
+        Self::new(string_bytes)
+    }
+}
+
+// The 9P protocol requires that strings are UTF-8 encoded.  The wire format is a u16
+// count |N|, encoded in little endian, followed by |N| bytes of UTF-8 data.
+impl WireFormat for P9String {
+    fn byte_size(&self) -> u32 {
+        (mem::size_of::<u16>() + self.len()) as u32
+    }
+
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         (self.len() as u16).encode(writer)?;
-        writer.write_all(self.as_bytes())
+        writer.write_all(self.cstr.as_bytes())
     }
 
     fn decode<R: Read>(reader: &mut R) -> io::Result<Self> {
         let len: u16 = WireFormat::decode(reader)?;
-        let mut result = String::with_capacity(len as usize);
-        reader.take(len as u64).read_to_string(&mut result)?;
-        Ok(result)
+        let mut string_bytes = vec![0u8; usize::from(len)];
+        reader.read_exact(&mut string_bytes)?;
+        Self::new(string_bytes)
     }
 }
 
@@ -246,11 +309,11 @@ mod test {
     #[test]
     fn string_byte_size() {
         let values = [
-            String::from("Google Video"),
-            String::from("网页 图片 资讯更多 »"),
-            String::from("Παγκόσμιος Ιστός"),
-            String::from("Поиск страниц на русском"),
-            String::from("전체서비스"),
+            "Google Video",
+            "网页 图片 资讯更多 »",
+            "Παγκόσμιος Ιστός",
+            "Поиск страниц на русском",
+            "전체서비스",
         ];
 
         let exp = values
@@ -258,13 +321,14 @@ mod test {
             .map(|v| (mem::size_of::<u16>() + v.len()) as u32);
 
         for (value, expected) in values.iter().zip(exp) {
-            assert_eq!(expected, value.byte_size());
+            let p9str = P9String::new(value.as_bytes()).unwrap();
+            assert_eq!(expected, p9str.byte_size());
         }
     }
 
     #[test]
     fn zero_length_string() {
-        let s = String::from("");
+        let s = P9String::new("").unwrap();
         assert_eq!(s.byte_size(), mem::size_of::<u16>() as u32);
 
         let mut buf = [0xffu8; 4];
@@ -273,21 +337,19 @@ mod test {
             .expect("failed to encode empty string");
         assert_eq!(&[0, 0, 0xff, 0xff], &buf);
 
-        assert_eq!(
-            s,
-            <String as WireFormat>::decode(&mut Cursor::new(&[0, 0, 0x61, 0x61][..]))
-                .expect("failed to decode empty string")
-        );
+        let decoded_s = <P9String as WireFormat>::decode(&mut Cursor::new(&[0, 0, 0x61, 0x61][..]))
+            .expect("failed to decode empty string");
+        assert_eq!(decoded_s.as_bytes(), b"");
     }
 
     #[test]
     fn string_encode() {
         let values = [
-            String::from("Google Video"),
-            String::from("网页 图片 资讯更多 »"),
-            String::from("Παγκόσμιος Ιστός"),
-            String::from("Поиск страниц на русском"),
-            String::from("전체서비스"),
+            "Google Video",
+            "网页 图片 资讯更多 »",
+            "Παγκόσμιος Ιστός",
+            "Поиск страниц на русском",
+            "전체서비스",
         ];
 
         let expected = values.iter().map(|v| {
@@ -305,7 +367,8 @@ mod test {
         for (val, exp) in values.iter().zip(expected) {
             let mut buf = vec![0; exp.len()];
 
-            WireFormat::encode(val, &mut Cursor::new(&mut *buf)).unwrap();
+            let p9str = P9String::new(val.as_bytes()).unwrap();
+            WireFormat::encode(&p9str, &mut Cursor::new(&mut *buf)).unwrap();
             assert_eq!(exp, buf);
         }
     }
@@ -313,18 +376,19 @@ mod test {
     #[test]
     fn string_decode() {
         assert_eq!(
-            String::from("Google Video"),
-            <String as WireFormat>::decode(&mut Cursor::new(
+            "Google Video".as_bytes(),
+            <P9String as WireFormat>::decode(&mut Cursor::new(
                 &[
                     0x0c, 0x00, 0x47, 0x6F, 0x6F, 0x67, 0x6C, 0x65, 0x20, 0x56, 0x69, 0x64, 0x65,
                     0x6F,
                 ][..]
             ))
             .unwrap()
+            .as_bytes()
         );
         assert_eq!(
-            String::from("网页 图片 资讯更多 »"),
-            <String as WireFormat>::decode(&mut Cursor::new(
+            "网页 图片 资讯更多 »".as_bytes(),
+            <P9String as WireFormat>::decode(&mut Cursor::new(
                 &[
                     0x1d, 0x00, 0xE7, 0xBD, 0x91, 0xE9, 0xA1, 0xB5, 0x20, 0xE5, 0x9B, 0xBE, 0xE7,
                     0x89, 0x87, 0x20, 0xE8, 0xB5, 0x84, 0xE8, 0xAE, 0xAF, 0xE6, 0x9B, 0xB4, 0xE5,
@@ -332,10 +396,11 @@ mod test {
                 ][..]
             ))
             .unwrap()
+            .as_bytes()
         );
         assert_eq!(
-            String::from("Παγκόσμιος Ιστός"),
-            <String as WireFormat>::decode(&mut Cursor::new(
+            "Παγκόσμιος Ιστός".as_bytes(),
+            <P9String as WireFormat>::decode(&mut Cursor::new(
                 &[
                     0x1f, 0x00, 0xCE, 0xA0, 0xCE, 0xB1, 0xCE, 0xB3, 0xCE, 0xBA, 0xCF, 0x8C, 0xCF,
                     0x83, 0xCE, 0xBC, 0xCE, 0xB9, 0xCE, 0xBF, 0xCF, 0x82, 0x20, 0xCE, 0x99, 0xCF,
@@ -343,10 +408,11 @@ mod test {
                 ][..]
             ))
             .unwrap()
+            .as_bytes()
         );
         assert_eq!(
-            String::from("Поиск страниц на русском"),
-            <String as WireFormat>::decode(&mut Cursor::new(
+            "Поиск страниц на русском".as_bytes(),
+            <P9String as WireFormat>::decode(&mut Cursor::new(
                 &[
                     0x2d, 0x00, 0xD0, 0x9F, 0xD0, 0xBE, 0xD0, 0xB8, 0xD1, 0x81, 0xD0, 0xBA, 0x20,
                     0xD1, 0x81, 0xD1, 0x82, 0xD1, 0x80, 0xD0, 0xB0, 0xD0, 0xBD, 0xD0, 0xB8, 0xD1,
@@ -355,42 +421,47 @@ mod test {
                 ][..]
             ))
             .unwrap()
+            .as_bytes()
         );
         assert_eq!(
-            String::from("전체서비스"),
-            <String as WireFormat>::decode(&mut Cursor::new(
+            "전체서비스".as_bytes(),
+            <P9String as WireFormat>::decode(&mut Cursor::new(
                 &[
                     0x0f, 0x00, 0xEC, 0xA0, 0x84, 0xEC, 0xB2, 0xB4, 0xEC, 0x84, 0x9C, 0xEB, 0xB9,
                     0x84, 0xEC, 0x8A, 0xA4,
                 ][..]
             ))
             .unwrap()
+            .as_bytes()
         );
     }
 
     #[test]
     fn invalid_string_decode() {
-        let _ = <String as WireFormat>::decode(&mut Cursor::new(&[
+        let _ = <P9String as WireFormat>::decode(&mut Cursor::new(&[
             0x06, 0x00, 0xed, 0xa0, 0x80, 0xed, 0xbf, 0xbf,
         ]))
         .expect_err("surrogate code point");
 
-        let _ = <String as WireFormat>::decode(&mut Cursor::new(&[
+        let _ = <P9String as WireFormat>::decode(&mut Cursor::new(&[
             0x05, 0x00, 0xf8, 0x80, 0x80, 0x80, 0xbf,
         ]))
         .expect_err("overlong sequence");
 
-        let _ =
-            <String as WireFormat>::decode(&mut Cursor::new(&[0x04, 0x00, 0xf4, 0x90, 0x80, 0x80]))
-                .expect_err("out of range");
+        let _ = <P9String as WireFormat>::decode(&mut Cursor::new(&[
+            0x04, 0x00, 0xf4, 0x90, 0x80, 0x80,
+        ]))
+        .expect_err("out of range");
 
-        let _ =
-            <String as WireFormat>::decode(&mut Cursor::new(&[0x04, 0x00, 0x63, 0x61, 0x66, 0xe9]))
-                .expect_err("ISO-8859-1");
+        let _ = <P9String as WireFormat>::decode(&mut Cursor::new(&[
+            0x04, 0x00, 0x63, 0x61, 0x66, 0xe9,
+        ]))
+        .expect_err("ISO-8859-1");
 
-        let _ =
-            <String as WireFormat>::decode(&mut Cursor::new(&[0x04, 0x00, 0xb0, 0xa1, 0xb0, 0xa2]))
-                .expect_err("EUC-KR");
+        let _ = <P9String as WireFormat>::decode(&mut Cursor::new(&[
+            0x04, 0x00, 0xb0, 0xa1, 0xb0, 0xa2,
+        ]))
+        .expect_err("EUC-KR");
     }
 
     #[test]
@@ -492,13 +563,7 @@ mod test {
             long_str.push_str("long");
         }
         long_str.push('!');
-
-        let count = long_str.len() + mem::size_of::<u16>();
-        let mut buf = vec![0; count];
-
-        long_str
-            .encode(&mut Cursor::new(&mut *buf))
-            .expect_err("long string");
+        P9String::new(long_str).expect_err("long string");
 
         // vector is too long.
         let mut long_vec: Vec<u32> = Vec::with_capacity(std::u16::MAX as usize);
@@ -516,7 +581,7 @@ mod test {
     #[derive(Debug, PartialEq, P9WireFormat)]
     struct Item {
         a: u64,
-        b: String,
+        b: P9String,
         c: Vec<u16>,
         buf: Data,
     }
@@ -525,7 +590,7 @@ mod test {
     fn struct_encode() {
         let item = Item {
             a: 0xdead_10cc_00ba_b10c,
-            b: String::from("冻住，不许走!"),
+            b: P9String::new("冻住，不许走!").unwrap(),
             c: vec![359, 492, 8891],
             buf: Data(vec![254, 129, 0, 62, 49, 172]),
         };
@@ -562,7 +627,7 @@ mod test {
     fn struct_decode() {
         let expected = Item {
             a: 0xface_b00c_0404_4b1d,
-            b: String::from("Огонь по готовности!"),
+            b: P9String::new("Огонь по готовности!").unwrap(),
             c: vec![20067, 32449, 549, 4972, 77, 1987],
             buf: Data(vec![126, 236, 79, 59, 6, 159]),
         };
@@ -656,7 +721,7 @@ mod test {
         let value = Nested {
             item: Item {
                 a: 0xcafe_d00d_8bad_f00d,
-                b: String::from("龍が我が敵を喰らう!"),
+                b: P9String::new("龍が我が敵を喰らう!").unwrap(),
                 c: vec![2679, 55_919, 44, 38_819, 792],
                 buf: Data(vec![129, 55, 200, 93, 7, 68]),
             },
@@ -676,7 +741,7 @@ mod test {
         let expected = Nested {
             item: Item {
                 a: 0x0ff1ce,
-                b: String::from("龍神の剣を喰らえ!"),
+                b: P9String::new("龍神の剣を喰らえ!").unwrap(),
                 c: vec![21687, 159, 55, 9217, 192],
                 buf: Data(vec![189, 22, 7, 59, 235]),
             },

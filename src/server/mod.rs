@@ -310,7 +310,7 @@ fn lookup(parent: &File, name: &CStr) -> io::Result<File> {
 
 fn do_walk(
     proc: &File,
-    wnames: Vec<String>,
+    wnames: Vec<P9String>,
     start: &File,
     ascii_casefold: bool,
     mds: &mut Vec<libc::stat64>,
@@ -318,11 +318,10 @@ fn do_walk(
     let mut current = MaybeOwned::Borrowed(start);
 
     for wname in wnames {
-        let name = string_to_cstring(wname)?;
-        current = MaybeOwned::Owned(lookup(current.as_ref(), &name).or_else(|e| {
+        current = MaybeOwned::Owned(lookup(current.as_ref(), wname.as_c_str()).or_else(|e| {
             if ascii_casefold {
                 if let Some(libc::ENOENT) = e.raw_os_error() {
-                    return ascii_casefold_lookup(proc, current.as_ref(), name.to_bytes());
+                    return ascii_casefold_lookup(proc, current.as_ref(), wname.as_bytes());
                 }
             }
 
@@ -577,10 +576,10 @@ impl Server {
 
         Ok(Rversion {
             msize: self.cfg.msize,
-            version: if version.version == "9P2000.L" {
-                String::from("9P2000.L")
+            version: if version.version.as_bytes() == b"9P2000.L" {
+                P9String::new(b"9P2000.L")?
             } else {
-                String::from("unknown")
+                P9String::new(b"unknown")?
             },
         })
     }
@@ -747,11 +746,14 @@ impl Server {
             flags |= libc::O_RDONLY;
         }
 
-        let name = string_to_cstring(lcreate.name)?;
-
         // Safe because this doesn't modify any memory and we check the return value.
         let fd = syscall!(unsafe {
-            libc::openat64(fid.path.as_raw_fd(), name.as_ptr(), flags, lcreate.mode)
+            libc::openat64(
+                fid.path.as_raw_fd(),
+                lcreate.name.as_ptr(),
+                flags,
+                lcreate.mode,
+            )
         })?;
 
         // Safe because we just opened this fd and we know it is valid.
@@ -763,7 +765,7 @@ impl Server {
 
         // This fid now refers to the newly created file so we need to update the O_PATH fd for it
         // as well.
-        fid.path = lookup(&fid.path, &name)?;
+        fid.path = lookup(&fid.path, lcreate.name.as_c_str())?;
 
         Ok(Rlcreate {
             qid: st.into(),
@@ -803,8 +805,7 @@ impl Server {
             )
         })? as usize;
         link.truncate(len);
-        let target = String::from_utf8(link)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        let target = P9String::new(link)?;
         Ok(Rreadlink { target })
     }
 
@@ -969,11 +970,8 @@ impl Server {
         while let Some(dirent) = dirents.next().transpose()? {
             let st = statat(&fid.path, dirent.name, 0)?;
 
-            let name = dirent
-                .name
-                .to_str()
-                .map(String::from)
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            let name_bytes: Vec<u8> = dirent.name.to_bytes().into();
+            let name = P9String::new(name_bytes)?;
 
             let entry = Dirent {
                 qid: st.into(),
@@ -1078,7 +1076,6 @@ impl Server {
         let path = string_to_cstring(format!("self/fd/{}", target.path.as_raw_fd()))?;
 
         let dir = self.fids.get(&link.dfid).ok_or_else(ebadf)?;
-        let name = string_to_cstring(link.name)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
         syscall!(unsafe {
@@ -1086,7 +1083,7 @@ impl Server {
                 self.proc.as_raw_fd(),
                 path.as_ptr(),
                 dir.path.as_raw_fd(),
-                name.as_ptr(),
+                link.name.as_ptr(),
                 libc::AT_SYMLINK_FOLLOW,
             )
         })?;
@@ -1095,29 +1092,25 @@ impl Server {
 
     fn mkdir(&mut self, mkdir: Tmkdir) -> io::Result<Rmkdir> {
         let fid = self.fids.get(&mkdir.dfid).ok_or_else(ebadf)?;
-        let name = string_to_cstring(mkdir.name)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
-        syscall!(unsafe { libc::mkdirat(fid.path.as_raw_fd(), name.as_ptr(), mkdir.mode) })?;
+        syscall!(unsafe { libc::mkdirat(fid.path.as_raw_fd(), mkdir.name.as_ptr(), mkdir.mode) })?;
         Ok(Rmkdir {
-            qid: statat(&fid.path, &name, 0).map(Qid::from)?,
+            qid: statat(&fid.path, mkdir.name.as_c_str(), 0).map(Qid::from)?,
         })
     }
 
     fn rename_at(&mut self, rename_at: Trenameat) -> io::Result<()> {
         let olddir = self.fids.get(&rename_at.olddirfid).ok_or_else(ebadf)?;
-        let oldname = string_to_cstring(rename_at.oldname)?;
-
         let newdir = self.fids.get(&rename_at.newdirfid).ok_or_else(ebadf)?;
-        let newname = string_to_cstring(rename_at.newname)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
         syscall!(unsafe {
             libc::renameat(
                 olddir.path.as_raw_fd(),
-                oldname.as_ptr(),
+                rename_at.oldname.as_ptr(),
                 newdir.path.as_raw_fd(),
-                newname.as_ptr(),
+                rename_at.newname.as_ptr(),
             )
         })?;
 
@@ -1126,12 +1119,11 @@ impl Server {
 
     fn unlink_at(&mut self, unlink_at: Tunlinkat) -> io::Result<()> {
         let dir = self.fids.get(&unlink_at.dirfd).ok_or_else(ebadf)?;
-        let name = string_to_cstring(unlink_at.name)?;
 
         syscall!(unsafe {
             libc::unlinkat(
                 dir.path.as_raw_fd(),
-                name.as_ptr(),
+                unlink_at.name.as_ptr(),
                 unlink_at.flags as libc::c_int,
             )
         })?;

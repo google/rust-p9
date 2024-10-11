@@ -7,4 +7,5 @@ mod wire_format;
 
 pub use self::messages::*;
 pub use self::wire_format::Data;
+pub use self::wire_format::P9String;
 pub use self::wire_format::WireFormat;

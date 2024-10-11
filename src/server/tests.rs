@@ -242,12 +242,14 @@ fn walk<P: Into<PathBuf>>(
     start: P,
     fid: u32,
     newfid: u32,
-    names: Vec<String>,
+    names: Vec<P9String>,
 ) {
     let mut mds = Vec::with_capacity(names.len());
     let mut buf = start.into();
     for name in &names {
-        buf.push(name);
+        let name = std::str::from_utf8(name.as_bytes()).unwrap();
+        let path = Path::new(&name);
+        buf.push(path);
         mds.push(
             buf.symlink_metadata()
                 .expect("failed to get metadata for path"),
@@ -278,7 +280,7 @@ fn open<P: Into<PathBuf>>(
     let wnames = if name.is_empty() {
         vec![]
     } else {
-        vec![String::from(name)]
+        vec![P9String::new(name.as_bytes())?]
     };
     walk(server, dir, dir_fid, fid, wnames);
 
@@ -338,7 +340,7 @@ fn create<P: Into<PathBuf>>(
 
     let tlcreate = Tlcreate {
         fid,
-        name: String::from(name),
+        name: P9String::new(name)?,
         flags,
         mode,
         gid: 0,
@@ -468,7 +470,7 @@ fn setup<P: AsRef<Path>>(name: P) -> (ScopedPath<OsString>, Server) {
 
     let tversion = Tversion {
         msize: DEFAULT_BUFFER_SIZE,
-        version: String::from("9P2000.L"),
+        version: P9String::new("9P2000.L").unwrap(),
     };
 
     let rversion = server
@@ -480,8 +482,8 @@ fn setup<P: AsRef<Path>>(name: P) -> (ScopedPath<OsString>, Server) {
     let tattach = Tattach {
         fid: ROOT_FID,
         afid: P9_NOFID,
-        uname: String::from("unittest"),
-        aname: String::from(""),
+        uname: P9String::new("unittest").unwrap(),
+        aname: P9String::new("").unwrap(),
         n_uname: 1000,
     };
 
@@ -556,11 +558,11 @@ fn tree_walk() {
         let dfid = next_fid;
         next_fid += 1;
 
-        let wnames: Vec<String> = dir
+        let wnames: Vec<P9String> = dir
             .strip_prefix(&test_dir)
             .expect("test directory is not prefix of subdir")
             .components()
-            .map(|c| Path::new(&c).to_string_lossy().to_string())
+            .map(|c| P9String::try_from(c.as_os_str()).unwrap())
             .collect();
         walk(&mut server, &*test_dir, ROOT_FID, dfid, wnames);
 
@@ -576,7 +578,9 @@ fn tree_walk() {
                 continue;
             }
 
-            let entry_path = dir.join(&dirent.name);
+            let dir_name = Path::new(std::str::from_utf8(dirent.name.as_bytes()).unwrap());
+
+            let entry_path = dir.join(dir_name);
             assert!(
                 entry_path.exists(),
                 "directory entry \"{}\" does not exist",
@@ -585,7 +589,7 @@ fn tree_walk() {
             let md = fs::symlink_metadata(&entry_path).expect("failed to get metadata for entry");
 
             let ty = if md.is_dir() {
-                dirs.push_back(dir.join(dirent.name));
+                dirs.push_back(dir.join(dir_name));
                 libc::DT_DIR
             } else if md.is_file() {
                 libc::DT_REG
@@ -643,7 +647,7 @@ where
         SetAttrKind::Directory => {
             let tmkdir = Tmkdir {
                 dfid: ROOT_FID,
-                name: String::from(name),
+                name: P9String::new(name).unwrap(),
                 mode: 0o755,
                 gid: 0,
             };
@@ -663,7 +667,7 @@ where
         &*test_dir,
         ROOT_FID,
         fid,
-        vec![String::from(name)],
+        vec![P9String::new(name).unwrap()],
     );
 
     let mut tsetattr = Tsetattr {
@@ -791,7 +795,7 @@ fn huge_directory() {
         &*test_dir,
         ROOT_FID,
         dfid,
-        vec![String::from(name)],
+        vec![P9String::new(name).unwrap()],
     );
 
     // Create ~4K files in the directory and then attempt to read them all.
@@ -799,13 +803,14 @@ fn huge_directory() {
     for i in 0..4096 {
         let name = format!("file_{}", i);
         create_local_file(&newdir, &name);
-        assert!(filenames.insert(name));
+        assert!(filenames.insert(P9String::new(name).unwrap()));
     }
 
     let fid = dfid + 1;
     open(&mut server, &newdir, dfid, "", fid, P9_DIRECTORY).expect("Failed to open directory");
     for f in readdir(&mut server, fid) {
-        let path = newdir.join(&f.name);
+        let dir_name = Path::new(std::str::from_utf8(f.name.as_bytes()).unwrap());
+        let path = newdir.join(dir_name);
 
         let md = fs::symlink_metadata(path).expect("failed to get metadata for path");
         check_qid(&f.qid, &md);
@@ -828,7 +833,7 @@ fn mkdir() {
     let name = "conan";
     let tmkdir = Tmkdir {
         dfid: ROOT_FID,
-        name: String::from(name),
+        name: P9String::new(name).unwrap(),
         mode: 0o755,
         gid: 0,
     };
@@ -863,21 +868,19 @@ fn unlink_all() {
                 let fid = next_fid;
                 next_fid += 1;
 
-                let wnames: Vec<String> = entry
+                let wnames: Vec<P9String> = entry
                     .path()
                     .strip_prefix(&test_dir)
                     .expect("test directory is not prefix of subdir")
                     .components()
-                    .map(|c| Path::new(&c).to_string_lossy().to_string())
+                    .map(|c| P9String::try_from(c.as_os_str()).unwrap())
                     .collect();
                 walk(&mut server, &*test_dir, ROOT_FID, fid, wnames);
                 dirs.push_back((fid, entry.path()));
             }
 
             names.push_back((
-                entry
-                    .file_name()
-                    .into_string()
+                P9String::new(entry.file_name().as_bytes())
                     .expect("failed to convert entry name to string"),
                 if ft.is_dir() {
                     libc::AT_REMOVEDIR as u32
@@ -914,9 +917,9 @@ fn rename_at() {
     let newname = "newfile";
     let trename = Trenameat {
         olddirfid: ROOT_FID,
-        oldname: String::from(name),
+        oldname: P9String::new(name).unwrap(),
         newdirfid: ROOT_FID,
-        newname: String::from(newname),
+        newname: P9String::new(newname).unwrap(),
     };
 
     server.rename_at(trename).expect("failed to rename file");
@@ -940,7 +943,7 @@ fn setlk_tlock(fid: u32, len: u64, start: u64, type_: i32) -> Tlock {
         start,
         length: len,
         proc_id: SERVER_PID,
-        client_id: String::from("test-server"),
+        client_id: P9String::new("test-server").unwrap(),
     }
 }
 
@@ -951,7 +954,7 @@ fn getlk_tgetlock(fid: u32, type_: i32) -> Tgetlock {
         start: 0,
         length: 0,
         proc_id: SERVER_PID,
-        client_id: String::from("test-server"),
+        client_id: P9String::new("test-server").unwrap(),
     }
 }
 
@@ -1340,7 +1343,7 @@ fn readlink() {
         &*test_dir,
         ROOT_FID,
         fid,
-        vec!["symlink".into()],
+        vec![P9String::new("symlink").unwrap()],
     );
 
     let treadlink = Treadlink { fid };
