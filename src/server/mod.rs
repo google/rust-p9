@@ -286,8 +286,8 @@ fn ascii_casefold_lookup(proc: &File, parent: &File, name: &[u8]) -> io::Result<
     let mut dirents = read_dir(&mut dir, 0)?;
 
     while let Some(entry) = dirents.next().transpose()? {
-        if name.eq_ignore_ascii_case(entry.name.to_bytes()) {
-            return lookup(parent, entry.name);
+        if name.eq_ignore_ascii_case(entry.name.as_bytes()) {
+            return lookup(parent, entry.name.as_c_str());
         }
     }
 
@@ -968,16 +968,13 @@ impl Server {
         let dir = fid.file.as_mut().ok_or_else(ebadf)?;
         let mut dirents = read_dir(dir, readdir.offset as libc::off64_t)?;
         while let Some(dirent) = dirents.next().transpose()? {
-            let st = statat(&fid.path, dirent.name, 0)?;
-
-            let name_bytes: Vec<u8> = dirent.name.to_bytes().into();
-            let name = P9String::new(name_bytes)?;
+            let st = statat(&fid.path, dirent.name.as_c_str(), 0)?;
 
             let entry = Dirent {
                 qid: st.into(),
                 offset: dirent.offset,
                 ty: dirent.type_,
-                name,
+                name: dirent.name,
             };
 
             let byte_size = entry.byte_size() as usize;

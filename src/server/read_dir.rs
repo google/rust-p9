@@ -7,6 +7,7 @@ use std::io::Result;
 use std::mem::size_of;
 use std::os::unix::io::AsRawFd;
 
+use crate::protocol::P9String;
 use crate::syscall;
 
 #[repr(C, packed)]
@@ -37,11 +38,11 @@ impl LinuxDirent64 {
     }
 }
 
-pub struct DirEntry<'r> {
+pub struct DirEntry {
     pub ino: libc::ino64_t,
     pub offset: u64,
     pub type_: u8,
-    pub name: &'r CStr,
+    pub name: P9String,
 }
 
 pub struct ReadDir<'d, D> {
@@ -96,7 +97,11 @@ impl<'d, D: AsRawFd> ReadDir<'d, D> {
 
         // The kernel will pad the name with additional nul bytes until it is 8-byte aligned so
         // we need to strip those off here.
-        let name = strip_padding(&back[..namelen]);
+        let name = match P9String::new(strip_padding(&back[..namelen])) {
+            Ok(name) => name,
+            Err(e) => return Some(Err(e)),
+        };
+
         let entry = DirEntry {
             ino: dirent64.d_ino,
             offset: dirent64.d_off as u64,
@@ -125,18 +130,15 @@ pub fn read_dir<D: AsRawFd>(dir: &mut D, offset: libc::off64_t) -> Result<ReadDi
     })
 }
 
-// Like `CStr::from_bytes_with_nul` but strips any bytes after the first '\0'-byte. Panics if `b`
-// doesn't contain any '\0' bytes.
-fn strip_padding(b: &[u8]) -> &CStr {
+// Trims any trailing '\0' bytes. Panics if `b` doesn't contain any '\0' bytes.
+fn strip_padding(b: &[u8]) -> &[u8] {
     // It would be nice if we could use memchr here but that's locked behind an unstable gate.
     let pos = b
         .iter()
         .position(|&c| c == 0)
         .expect("`b` doesn't contain any nul bytes");
 
-    // Safe because we are creating this string with the first nul-byte we found so we can
-    // guarantee that it is nul-terminated and doesn't contain any interior nuls.
-    unsafe { CStr::from_bytes_with_nul_unchecked(&b[..pos + 1]) }
+    &b[..pos]
 }
 
 #[cfg(test)]
@@ -145,17 +147,11 @@ mod test {
 
     #[test]
     fn padded_cstrings() {
-        assert_eq!(strip_padding(b".\0\0\0\0\0\0\0").to_bytes(), b".");
-        assert_eq!(strip_padding(b"..\0\0\0\0\0\0").to_bytes(), b"..");
-        assert_eq!(
-            strip_padding(b"normal cstring\0").to_bytes(),
-            b"normal cstring"
-        );
-        assert_eq!(strip_padding(b"\0\0\0\0").to_bytes(), b"");
-        assert_eq!(
-            strip_padding(b"interior\0nul bytes\0\0\0").to_bytes(),
-            b"interior"
-        );
+        assert_eq!(strip_padding(b".\0\0\0\0\0\0\0"), b".");
+        assert_eq!(strip_padding(b"..\0\0\0\0\0\0"), b"..");
+        assert_eq!(strip_padding(b"normal cstring\0"), b"normal cstring");
+        assert_eq!(strip_padding(b"\0\0\0\0"), b"");
+        assert_eq!(strip_padding(b"interior\0nul bytes\0\0\0"), b"interior");
     }
 
     #[test]
