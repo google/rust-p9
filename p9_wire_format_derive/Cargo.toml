@@ -2,6 +2,7 @@
 name = "p9_wire_format_derive"
 version = "0.2.3"
 authors = ["The ChromiumOS Authors"]
+edition = "2021"
 license = "BSD-3-Clause"
 description = "Supporting proc-macro for the `p9` crate."
 repository = "https://github.com/google/rust-p9"

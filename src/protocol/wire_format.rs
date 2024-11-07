@@ -198,6 +198,8 @@ mod test {
     use std::mem;
     use std::string::String;
 
+    use p9_wire_format_derive::P9WireFormat;
+
     use super::*;
 
     #[test]
