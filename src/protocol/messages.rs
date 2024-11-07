@@ -10,6 +10,8 @@ use std::mem;
 use std::string::String;
 use std::vec::Vec;
 
+use p9_wire_format_derive::P9WireFormat;
+
 use crate::protocol::wire_format::Data;
 use crate::protocol::wire_format::WireFormat;
 

@@ -4,11 +4,6 @@
 
 #![cfg(unix)]
 
-extern crate libc;
-
-#[macro_use]
-extern crate p9_wire_format_derive;
-
 mod protocol;
 mod server;
 

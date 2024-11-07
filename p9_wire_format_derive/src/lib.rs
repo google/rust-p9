@@ -8,17 +8,11 @@
 
 #![recursion_limit = "256"]
 
-extern crate proc_macro;
-extern crate proc_macro2;
-
-#[macro_use]
-extern crate quote;
-
-#[macro_use]
-extern crate syn;
-
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
+use quote::quote;
+use quote::quote_spanned;
+use syn::parse_macro_input;
 use syn::spanned::Spanned;
 use syn::Data;
 use syn::DeriveInput;
@@ -49,13 +43,12 @@ fn p9_wire_format_inner(input: DeriveInput) -> TokenStream {
     let scope = Ident::new(&scope, Span::call_site());
     quote! {
         mod #scope {
-            extern crate std;
-            use self::std::io;
-            use self::std::result::Result::Ok;
+            use ::std::io;
+            use ::std::result::Result::Ok;
 
             use super::#container;
 
-            use protocol::WireFormat;
+            use crate::protocol::WireFormat;
 
             impl WireFormat for #container {
                 fn byte_size(&self) -> u32 {
@@ -158,6 +151,8 @@ fn decode_wire_format(data: &Data, container: &Ident) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
+    use syn::parse_quote;
+
     use super::*;
 
     #[test]
@@ -247,13 +242,12 @@ mod tests {
 
         let expected = quote! {
             mod wire_format_niijima_先輩 {
-                extern crate std;
-                use self::std::io;
-                use self::std::result::Result::Ok;
+                use ::std::io;
+                use ::std::result::Result::Ok;
 
                 use super::Niijima_先輩;
 
-                use protocol::WireFormat;
+                use crate::protocol::WireFormat;
 
                 impl WireFormat for Niijima_先輩 {
                     fn byte_size(&self) -> u32 {
