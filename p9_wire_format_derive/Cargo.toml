@@ -1,6 +1,6 @@
 [package]
 name = "p9_wire_format_derive"
-version = "0.2.3"
+version = "0.3.0"
 authors = ["The ChromiumOS Authors"]
 edition = "2021"
 license = "BSD-3-Clause"
