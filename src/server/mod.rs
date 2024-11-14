@@ -966,7 +966,7 @@ impl Server {
         let mut cursor = Cursor::new(Vec::with_capacity(count as usize));
 
         let dir = fid.file.as_mut().ok_or_else(ebadf)?;
-        let mut dirents = read_dir(dir, readdir.offset as libc::off64_t)?;
+        let mut dirents = read_dir(dir, readdir.offset as libc::c_long)?;
         while let Some(dirent) = dirents.next().transpose()? {
             let st = statat(&fid.path, dirent.name.as_c_str(), 0)?;
 
