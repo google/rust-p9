@@ -1,6 +1,6 @@
 [package]
 name = "p9"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["The ChromiumOS Authors"]
 edition = "2021"
 license = "BSD-3-Clause"
