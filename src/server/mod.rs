@@ -25,6 +25,10 @@ use std::os::unix::io::RawFd;
 use std::path::Path;
 use std::str::FromStr;
 
+#[cfg(target_os = "android")]
+use libc::__fsid_t as fsid_t;
+#[cfg(not(target_os = "android"))]
+use libc::fsid_t;
 use read_dir::read_dir;
 use serde::Deserialize;
 use serde::Serialize;
@@ -711,7 +715,7 @@ impl Server {
             ffree: out.f_ffree,
             // Safe because the fsid has only integer fields and the compiler will verify that is
             // the same width as the `fsid` field in Rstatfs.
-            fsid: unsafe { mem::transmute::<libc::fsid_t, u64>(out.f_fsid) },
+            fsid: unsafe { mem::transmute::<fsid_t, u64>(out.f_fsid) },
             namelen: out.f_namelen as u32,
         })
     }
