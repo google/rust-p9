@@ -59,7 +59,7 @@ impl ReadDir {
     }
 }
 
-pub fn read_dir<D: AsRawFd>(dir: &mut D, offset: libc::c_long) -> Result<ReadDir> {
+pub fn read_dir<D: AsRawFd>(dir: &D, offset: libc::c_long) -> Result<ReadDir> {
     let dup_fd = unsafe { libc::fcntl(dir.as_raw_fd(), F_DUPFD_CLOEXEC, 0) };
     let dir = unsafe { libc::fdopendir(dup_fd) };
     if dir.is_null() {
