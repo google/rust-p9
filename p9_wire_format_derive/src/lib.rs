@@ -8,6 +8,11 @@
 
 #![recursion_limit = "256"]
 
+// Non-cargo build systems may not automatically include this for tests, so
+// explicitly include it. We could also `#[cfg(not(test))]` `p9_wire_format`, but
+// that leads to warnings about unused imports.
+extern crate proc_macro;
+
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::quote;
