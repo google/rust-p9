@@ -1352,3 +1352,130 @@ fn readlink() {
 
     assert_eq!(rreadlink.target, "target/of/symlink");
 }
+
+#[test]
+fn path_traversal_protection() {
+    let (test_dir, mut server) = setup("path_traversal_protection");
+
+    let root_metadata = test_dir.symlink_metadata().expect("failed to get root metadata");
+    // 1. Walking ".." from root stays at root
+    let fid = ROOT_FID + 1;
+    let twalk = Twalk {
+        fid: ROOT_FID,
+        newfid: fid,
+        wnames: vec![P9String::new("..").unwrap()],
+    };
+    let rwalk = server.walk(twalk).expect("failed to walk .. from root");
+    assert_eq!(rwalk.wqids.len(), 1);
+    check_qid(&rwalk.wqids[0], &root_metadata);
+
+    // 2. Walking "subdir", "..", ".." stays at root
+    let fid2 = ROOT_FID + 2;
+    let twalk = Twalk {
+        fid: ROOT_FID,
+        newfid: fid2,
+        wnames: vec![
+            P9String::new("subdir").unwrap(),
+            P9String::new("..").unwrap(),
+            P9String::new("..").unwrap(),
+        ],
+    };
+    let rwalk = server.walk(twalk).expect("failed to walk subdir/../../");
+    assert_eq!(rwalk.wqids.len(), 3);
+    check_qid(&rwalk.wqids[2], &root_metadata);
+
+    // 3. Walking with an empty component or component containing '/' should return EINVAL
+    let fid3 = ROOT_FID + 3;
+    let twalk = Twalk {
+        fid: ROOT_FID,
+        newfid: fid3,
+        wnames: vec![P9String::new("").unwrap()],
+    };
+    let err = server.walk(twalk).unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::EINVAL));
+
+    let twalk = Twalk {
+        fid: ROOT_FID,
+        newfid: fid3,
+        wnames: vec![P9String::new("subdir/b").unwrap()],
+    };
+    let err = server.walk(twalk).unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::EINVAL));
+
+    // 4. Test that creating a file with forbidden names fails
+    let fid4 = ROOT_FID + 4;
+    // We walk to subdir first
+    let twalk = Twalk {
+        fid: ROOT_FID,
+        newfid: fid4,
+        wnames: vec![P9String::new("subdir").unwrap()],
+    };
+    server.walk(twalk).expect("failed to walk to subdir");
+
+    let tlcreate_invalid_names = vec!["..", ".", "", "a/b", "/etc/shadow"];
+    for name in tlcreate_invalid_names {
+        let tlcreate = Tlcreate {
+            fid: fid4,
+            name: P9String::new(name).unwrap(),
+            flags: P9_RDWR,
+            mode: 0o644,
+            gid: 0,
+        };
+        let err = server.lcreate(tlcreate).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EINVAL));
+    }
+
+    // 5. Test that mkdir with forbidden names fails
+    let tmkdir_invalid_names = vec!["..", ".", "", "a/b", "/etc/shadow"];
+    for name in tmkdir_invalid_names {
+        let tmkdir = Tmkdir {
+            dfid: fid4,
+            name: P9String::new(name).unwrap(),
+            mode: 0o755,
+            gid: 0,
+        };
+        let err = server.mkdir(tmkdir).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EINVAL));
+    }
+
+    // 6. Test rename_at with forbidden names
+    // Create a valid file to rename
+    let valid_fid = ROOT_FID + 5;
+    let _ = create(&mut server, &*test_dir, ROOT_FID, valid_fid, "valid_file", P9_RDWR, 0o644).expect("failed to create valid file");
+    // Clunk the valid_fid because we don't need it open for rename
+    let tclunk = Tclunk { fid: valid_fid };
+    server.clunk(&tclunk).expect("failed to clunk");
+
+    let invalid_names = vec!["..", ".", "", "a/b", "/etc/shadow"];
+    for name in &invalid_names {
+        let trenameat = Trenameat {
+            olddirfid: ROOT_FID,
+            oldname: P9String::new("valid_file").unwrap(),
+            newdirfid: ROOT_FID,
+            newname: P9String::new(*name).unwrap(),
+        };
+        let err = server.rename_at(trenameat).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EINVAL));
+
+        let trenameat = Trenameat {
+            olddirfid: ROOT_FID,
+            oldname: P9String::new(*name).unwrap(),
+            newdirfid: ROOT_FID,
+            newname: P9String::new("valid_file2").unwrap(),
+        };
+        let err = server.rename_at(trenameat).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EINVAL));
+    }
+
+    // 7. Test unlink_at with forbidden names
+    for name in invalid_names {
+        let tunlinkat = Tunlinkat {
+            dirfd: ROOT_FID,
+            name: P9String::new(name).unwrap(),
+            flags: 0,
+        };
+        let err = server.unlink_at(tunlinkat).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EINVAL));
+    }
+}
+
