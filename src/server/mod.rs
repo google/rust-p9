@@ -298,6 +298,14 @@ fn ascii_casefold_lookup(proc: &File, parent: &File, name: &[u8]) -> io::Result<
     Err(io::Error::from_raw_os_error(libc::ENOENT))
 }
 
+fn validate_path_component(name: &P9String) -> io::Result<()> {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() || bytes.contains(&b'/') || bytes == b"." || bytes == b".." {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    Ok(())
+}
+
 fn lookup(parent: &File, name: &CStr) -> io::Result<File> {
     // Safe because this doesn't modify any memory and we check the return value.
     let fd = syscall!(unsafe {
@@ -317,11 +325,37 @@ fn do_walk(
     wnames: Vec<P9String>,
     start: &File,
     ascii_casefold: bool,
+    root_dev: u64,
+    root_ino: u64,
     mds: &mut Vec<libc::stat64>,
 ) -> io::Result<File> {
     let mut current = MaybeOwned::Borrowed(start);
 
     for wname in wnames {
+        validate_path_component(&wname)?;
+        let wname_bytes = wname.as_c_str().to_bytes();
+
+        // Sanity check: path component must not be empty and must not contain bytes that are path separators ('/')
+        if wname_bytes.is_empty() || wname_bytes.contains(&b'/') {
+            return Err(io::Error::from_raw_os_error(libc::EINVAL));
+        }
+
+        if wname_bytes == b"." {
+            // "." is a no-op, we stay at current
+            let current_st = stat(current.as_ref())?;
+            mds.push(current_st);
+            continue;
+        }
+
+        if wname_bytes == b".." {
+            let current_st = stat(current.as_ref())?;
+            if current_st.st_dev as u64 == root_dev && current_st.st_ino as u64 == root_ino {
+                // We are at the root, ".." is a no-op (stays at root)
+                mds.push(current_st);
+                continue;
+            }
+        }
+
         current = MaybeOwned::Owned(lookup(current.as_ref(), wname.as_c_str()).or_else(|e| {
             if ascii_casefold {
                 if let Some(libc::ENOENT) = e.raw_os_error() {
@@ -423,7 +457,10 @@ pub struct Server {
     fids: BTreeMap<u32, Fid>,
     proc: File,
     cfg: Config,
+    root_dev: u64,
+    root_ino: u64,
 }
+
 
 impl Server {
     pub fn new<P: Into<Box<Path>>>(
@@ -455,10 +492,27 @@ impl Server {
 
         // Safe because we just opened this fd and we know it is valid.
         let proc = unsafe { File::from_raw_fd(fd) };
+
+        let root_cstr = CString::new(cfg.root.as_os_str().as_bytes())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        // Safe because this doesn't modify any memory and we check the return value.
+        let root_fd = syscall!(unsafe {
+            libc::openat64(
+                libc::AT_FDCWD,
+                root_cstr.as_ptr(),
+                libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        })?;
+        let root_file = unsafe { File::from_raw_fd(root_fd) };
+        let root_st = stat(&root_file)?;
+
         Ok(Server {
             fids: BTreeMap::new(),
             proc,
             cfg,
+            root_dev: root_st.st_dev as u64,
+            root_ino: root_st.st_ino as u64,
         })
     }
 
@@ -611,6 +665,8 @@ impl Server {
             walk.wnames,
             start,
             self.cfg.ascii_casefold,
+            self.root_dev,
+            self.root_ino,
             &mut mds,
         ) {
             Ok(end) => {
@@ -734,6 +790,7 @@ impl Server {
     }
 
     fn lcreate(&mut self, lcreate: Tlcreate) -> io::Result<Rlcreate> {
+        validate_path_component(&lcreate.name)?;
         let fid = self.fids.get_mut(&lcreate.fid).ok_or_else(ebadf)?;
 
         if fid.filetype != FileType::Directory {
@@ -1073,6 +1130,7 @@ impl Server {
     }
 
     fn link(&mut self, link: Tlink) -> io::Result<()> {
+        validate_path_component(&link.name)?;
         let target = self.fids.get(&link.fid).ok_or_else(ebadf)?;
         let path = string_to_cstring(format!("self/fd/{}", target.path.as_raw_fd()))?;
 
@@ -1092,6 +1150,7 @@ impl Server {
     }
 
     fn mkdir(&mut self, mkdir: Tmkdir) -> io::Result<Rmkdir> {
+        validate_path_component(&mkdir.name)?;
         let fid = self.fids.get(&mkdir.dfid).ok_or_else(ebadf)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -1102,6 +1161,8 @@ impl Server {
     }
 
     fn rename_at(&mut self, rename_at: Trenameat) -> io::Result<()> {
+        validate_path_component(&rename_at.oldname)?;
+        validate_path_component(&rename_at.newname)?;
         let olddir = self.fids.get(&rename_at.olddirfid).ok_or_else(ebadf)?;
         let newdir = self.fids.get(&rename_at.newdirfid).ok_or_else(ebadf)?;
 
@@ -1119,6 +1180,7 @@ impl Server {
     }
 
     fn unlink_at(&mut self, unlink_at: Tunlinkat) -> io::Result<()> {
+        validate_path_component(&unlink_at.name)?;
         let dir = self.fids.get(&unlink_at.dirfd).ok_or_else(ebadf)?;
 
         syscall!(unsafe {
